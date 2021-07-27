@@ -1,0 +1,146 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "smart trip tracker",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "HelloWorldIntent",
+          "slots": [],
+          "samples": [
+            "hello",
+            "how are you",
+            "say hi world",
+            "say hi",
+            "hi",
+            "say hello world",
+            "say hello"
+          ]
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        },
+        {
+          "name": "GetNextBusIntent",
+          "slots": [
+            {
+              "name": "startingMetroStation",
+              "type": "MetroStation"
+            },
+            {
+              "name": "metroDirection",
+              "type": "MetroStation"
+            },
+            {
+              "name": "metroLine",
+              "type": "metroLine"
+            }
+          ],
+          "samples": [
+            "metro station {startingMetroStation} on {metroLine} to {metroDirection}",
+            "{startingMetroStation} {metroLine} to {metroDirection}"
+          ]
+        }
+      ],
+      "types": [
+        {
+          "values": [
+            {
+              "name": {
+                "value": "largo town center"
+              }
+            },
+            {
+              "name": {
+                "value": "franconia",
+                "synonyms": [
+                  "springfield"
+                ]
+              }
+            },
+            {
+              "name": {
+                "value": "huntington"
+              }
+            },
+            {
+              "name": {
+                "value": "greenbelt"
+              }
+            },
+            {
+              "name": {
+                "value": "rosslyn"
+              }
+            },
+            {
+              "name": {
+                "value": "arlington cemetery"
+              }
+            },
+            {
+              "name": {
+                "value": "crystal city"
+              }
+            }
+          ],
+          "name": "MetroStation"
+        },
+        {
+          "values": [
+            {
+              "name": {
+                "value": "SV",
+                "synonyms": [
+                  "silver"
+                ]
+              }
+            },
+            {
+              "name": {
+                "value": "OR",
+                "synonyms": [
+                  "orange"
+                ]
+              }
+            },
+            {
+              "name": {
+                "value": "YL",
+                "synonyms": [
+                  "yellow"
+                ]
+              }
+            },
+            {
+              "name": {
+                "value": "BL",
+                "synonyms": [
+                  "blue"
+                ]
+              }
+            }
+          ],
+          "name": "metroLine"
+        }
+      ]
+    }
+  },
+  "version": "4"
+}
