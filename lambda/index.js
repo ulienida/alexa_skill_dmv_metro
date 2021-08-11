@@ -4,21 +4,213 @@
  * session persistence, api calls, and more.
  * */
 const Alexa = require('ask-sdk-core');
+var persistenceAdapter = getPersistenceAdapter();
 const CTA_CONFIG = require('./cta.config.js');
 const axios = require('axios');
+
+function getPersistenceAdapter(tableName) {
+    // This function is an indirect way to detect if this is part of an Alexa-Hosted skill
+        const {S3PersistenceAdapter} = require('ask-sdk-s3-persistence-adapter');
+        return new S3PersistenceAdapter({
+            bucketName: process.env.S3_PERSISTENCE_BUCKET
+        });
+    }
 
 const LaunchRequestHandler = {
     canHandle(handlerInput) {
         return Alexa.getRequestType(handlerInput.requestEnvelope) === 'LaunchRequest';
     },
     handle(handlerInput) {
-        const speakOutput = 'Welcome, please state your starting station, line color, and direction:';
-
-        return handlerInput.responseBuilder
-            .speak(speakOutput)
-            .reprompt(speakOutput)
-            .getResponse();
+        // logic: launch -> please state your 3 elements
+        // if saved places not available -> ask if users want to save their favorite places such as home/office/school
+        // if saved places are available -> don't ask & recognize the keywords in nextMetroIntentHandler
+        // further feature: user can save places into more variables other than home/office/school
+        
+        const sessionAttributes = handlerInput.attributesManager.getSessionAttributes();
+        
+        const home = sessionAttributes['home'];
+        
+        const returningOutput = 'Welcome back! Which station or route are you going to?';
+        const welcomeOutput = 'Welcome to DMV Metro, set your home metro station for quick access in the future.';
+        // if users have already input in their favorite places -> ask their 3 elements
+        const favoritesAvailable = home; // add favorite routes later
+        if (favoritesAvailable){
+            return handlerInput.responseBuilder
+                .speak(returningOutput)
+                .addDelegateDirective({
+                    name: 'UserSetsRouteIntent',
+                    confirmationStatus: 'NONE',
+                    slots: {}
+                })
+                .getResponse();
+        }
+        // if users have not input in their favorite places -> ask for their favorite places
+        else{
+            return handlerInput.responseBuilder
+                .speak(welcomeOutput)
+                .addDelegateDirective({
+                    name: 'UserSetsHomeIntent',
+                    confirmationStatus: 'NONE',
+                    slots: {}
+                })
+                .getResponse(); 
+        }
+        
     }
+};
+
+const UserSetsHomeIntentHander = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'UserSetsHomeIntent';
+    },
+    handle(handlerInput){
+        const {attributesManager, requestEnvelope} = handlerInput;
+        // the attributes manager allows us to access session attributes
+        const sessionAttributes = handlerInput.attributesManager.getSessionAttributes();
+        const {intent} = requestEnvelope.request;
+        
+        const getCanonicalSlot = (slot) => {
+            if (slot.resolutions && slot.resolutions.resolutionsPerAuthority.length) {
+                for (let resolution of slot.resolutions.resolutionsPerAuthority) {
+                    if (resolution.status && resolution.status.code === 'ER_SUCCESS_MATCH') {
+                        return resolution.values[0].value.name;
+                    }
+                }
+            }
+        }
+       
+        const home = getCanonicalSlot(Alexa.getSlot(requestEnvelope, 'home'));
+        
+        
+        sessionAttributes['home'] = home;
+        
+        
+        const speakOutput = `Your home station is ${home}, I will remember that from now on.`;
+        const repromptOutput = `Please set your home metro station.`;
+        
+        return handlerInput.responseBuilder
+        .speak(speakOutput)
+        .reprompt(repromptOutput)
+        .getResponse();
+    }
+};
+
+// intent handler for when user has already set home, so just need direction & line color
+const UserSetsRouteIntentHandler = {
+  canHandle(handlerInput) {
+    return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+      && Alexa.getIntentName(handlerInput.requestEnvelope) === 'UserSetsRouteIntent';
+  },
+  async handle(handlerInput) {
+      
+    const sessionAttributes = handlerInput.attributesManager.getSessionAttributes();
+    const startingMetroStation = sessionAttributes['home'];
+      
+    // call the api to retrieve list of stations corresponding to station codes
+    let stationResponse = await axios.get(`https://api.wmata.com/Rail.svc/json/jStations`, {headers: {"api_key": "18271ead88f0493da104166932da85d6"}});
+    let stationArray = stationResponse.data["Stations"];
+    let stationCode;
+    let speakOutput;
+    let minuteArray = [];
+    
+    // Extract the busNumber and busDirection from the intent
+    const { requestEnvelope } = handlerInput;
+    // convert speaker's synonyms into canonical slot value
+    const getCanonicalSlot = (slot) => {
+        if (slot.resolutions && slot.resolutions.resolutionsPerAuthority.length) {
+            for (let resolution of slot.resolutions.resolutionsPerAuthority) {
+                if (resolution.status && resolution.status.code === 'ER_SUCCESS_MATCH') {
+                    return resolution.values[0].value.name;
+                }
+            }
+        }
+    }
+    
+    const metroLine = getCanonicalSlot(Alexa.getSlot(requestEnvelope, 'metroLine'));
+    const metroDirection = getCanonicalSlot(Alexa.getSlot(requestEnvelope, 'metroDirection'));
+    
+    // find the stationcode of the starting metro station 
+    stationArray.forEach((station) => {
+        if (station["Name"].toLowerCase() === startingMetroStation){
+            stationCode = station["Code"];
+        }
+        
+    })
+    
+    // if the name is valid -> there exists a valid station code
+    if (stationCode){
+        // call the api & find the next train
+        //speakOutput = `checking the API for ${stationCode} and ${startingMetroStation}`;
+        let timeResponse = await axios.get(`https://api.wmata.com/StationPrediction.svc/json/GetPrediction/${stationCode}`, {
+                                                                                            headers: {"api_key": "18271ead88f0493da104166932da85d6"}});
+        let timeArray = timeResponse.data["Trains"];
+        // match destination & line color
+        timeArray.forEach((train) => 
+        {
+            if (train["DestinationName"].toLowerCase() === metroDirection && train["Line"] === metroLine)
+            {
+                // grab the minute info
+                let minutes = train["Min"];
+                // push the minutes to the array
+                minuteArray.push(minutes);
+                //speakOutput = `The next ${metroLine} train from ${startingMetroStation} to ${metroDirection} is in ${minutes} minutes}`;
+            }
+            // if either destination or line color doesn't match
+        });
+        if (minuteArray.length === 0)
+        {
+            speakOutput = `Your direction ${metroDirection} or line color ${metroLine} is not valid for the starting station ${startingMetroStation}.`;
+        }
+        else
+        {
+            let minMinute = Math.min(minuteArray);
+            speakOutput = `The next ${metroLine} train from ${startingMetroStation} to ${metroDirection} is in ${minMinute} minutes`;
+        }
+        //speakOutput = JSON.stringify(timeResponse.data["Trains"]);
+    }
+    else{
+        speakOutput = `we could not find the station: ${startingMetroStation}`;
+    }
+    /*
+    // Given the bus number and direction, get the corresponding bus stop number from the CTA config file
+    const busStop = CTA_CONFIG.config.BUS_STOPS[busNumber][busDirection.toLowerCase()];
+    // Construct the params needed for the API call
+    const params = {
+        key: CTA_CONFIG.config.BUS_API_KEY,
+        format: 'json',
+        rt: busNumber,
+        stpid: busStop
+    };
+    // Execute the API call to get the real-time next bus predictions
+    let response = await axios.get(`${CTA_CONFIG.config.BUS_ROOT_URL}bustime/api/v2/getpredictions`, {params: params});
+    // Respond with the user provided number and direction to confirm the intent functionality
+    // Define the speakOutput string variable, then populate accordingly
+    let speakOutput;
+    // Check to ensure there is a 'bustime-response' object
+    if(response && response.data && response.data['bustime-response']){
+    // Check to ensure there are available prediction times
+        if(response.data['bustime-response'].prd && 0 < response.data['bustime-response'].prd.length){
+        // Extract the next prediction time
+        let nextTime = response.data['bustime-response'].prd[0].prdctdn;
+        // Construct the next bus arrival speech output with the given time retrieved
+        speakOutput = `${nextTime} minutes until the next ${busDirection}-bound ${busNumber} bus.`;
+        }else if (response.data['bustime-response'].error && 0 < response.data['bustime-response'].error.length){
+        // If in this block, there are no available next arrival times for the given bus stop
+        speakOutput = `No available arrival times for bus #${busNumber} ${busDirection}-bound.`;
+        }else{
+        speakOutput = `An error has occurred while retrieving next time for bus #${busNumber} ${busDirection}-bound.`;
+        }
+    }else{
+    speakOutput = `An error has occurred while retrieving next time for bus #${busNumber} ${busDirection}-bound.`;
+    }
+    */
+
+    return handlerInput.responseBuilder
+      .speak(speakOutput)
+      .withShouldEndSession(true) // Force the skill to close once intent handled
+      .getResponse();
+  }
 };
 
 const NextBusIntentHandler = {
@@ -237,6 +429,36 @@ const ErrorHandler = {
     }
 };
 
+const LoadAttributesRequestInterceptor = {
+    async process(handlerInput) {
+        const {attributesManager, requestEnvelope} = handlerInput;
+        if (Alexa.isNewSession(requestEnvelope)){ //is this a new session? this check is not enough if using auto-delegate (more on next module)
+            const persistentAttributes = await attributesManager.getPersistentAttributes() || {};
+            console.log('Loading from persistent storage: ' + JSON.stringify(persistentAttributes));
+            //copy persistent attribute to session attributes
+            attributesManager.setSessionAttributes(persistentAttributes); // ALL persistent attributtes are now session attributes
+        }
+    }
+};
+
+// If you disable the skill and reenable it the userId might change and you lose the persistent attributes saved below as userId is the primary key
+const SaveAttributesResponseInterceptor = {
+    async process(handlerInput, response) {
+        if (!response) return; // avoid intercepting calls that have no outgoing response due to errors
+        const {attributesManager, requestEnvelope} = handlerInput;
+        const sessionAttributes = attributesManager.getSessionAttributes();
+        const shouldEndSession = (typeof response.shouldEndSession === "undefined" ? true : response.shouldEndSession); //is this a session end?
+        if (shouldEndSession || Alexa.getRequestType(requestEnvelope) === 'SessionEndedRequest') { // skill was stopped or timed out
+            // we increment a persistent session counter here
+            sessionAttributes['sessionCounter'] = sessionAttributes['sessionCounter'] ? sessionAttributes['sessionCounter'] + 1 : 1;
+            // we make ALL session attributes persistent
+            console.log('Saving to persistent storage:' + JSON.stringify(sessionAttributes));
+            attributesManager.setPersistentAttributes(sessionAttributes);
+            await attributesManager.savePersistentAttributes();
+        }
+    }
+};
+
 /**
  * This handler acts as the entry point for your skill, routing all request and response
  * payloads to the handlers above. Make sure any new handlers or interceptors you've
@@ -246,6 +468,8 @@ exports.handler = Alexa.SkillBuilders.custom()
     .addRequestHandlers(
         LaunchRequestHandler,
         NextBusIntentHandler,
+        UserSetsRouteIntentHandler,
+        UserSetsHomeIntentHander,
         HelpIntentHandler,
         CancelAndStopIntentHandler,
         FallbackIntentHandler,
@@ -253,5 +477,10 @@ exports.handler = Alexa.SkillBuilders.custom()
         IntentReflectorHandler)
     .addErrorHandlers(
         ErrorHandler)
+    .addRequestInterceptors(
+        LoadAttributesRequestInterceptor)
+    .addResponseInterceptors(
+        SaveAttributesResponseInterceptor)
+    .withPersistenceAdapter(persistenceAdapter)
     .withCustomUserAgent('sample/hello-world/v1.2')
     .lambda();
